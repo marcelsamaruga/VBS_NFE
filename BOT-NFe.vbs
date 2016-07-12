@@ -1,6 +1,7 @@
 ' -- inicializando objetos e constantes para todo o processo -- '
 set objFSO = createObject("Scripting.FileSystemObject")
 
+
 CONST forReading = 1
 CONST adTypeBinary = 1
 CONST adSaveCreateOverWrite = 2
