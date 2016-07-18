@@ -1,2 +1,2 @@
 cscript BOT-NFe.vbs
-pause
+#pause

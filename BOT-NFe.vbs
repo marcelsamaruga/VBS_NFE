@@ -1,7 +1,6 @@
 ' -- inicializando objetos e constantes para todo o processo -- '
 set objFSO = createObject("Scripting.FileSystemObject")
 
-
 CONST forReading = 1
 CONST adTypeBinary = 1
 CONST adSaveCreateOverWrite = 2
@@ -9,7 +8,7 @@ CONST ForAppending = 8
 CONST asASCII = 0
 CONST SXH_SERVER_CERT_IGNORE_ALL_SERVER_ERRORS = 13056
 
-'ON ERROR RESUME NEXT
+ON ERROR RESUME NEXT
 ' *** *** *** *** *** *** *** 
 
 ' -- nome do arquivo de log: AAAAMMDDHHMMSS.log -- '
@@ -113,8 +112,11 @@ writeLogFile("[DEBUG] Acessando API para recuperação da lista de notas fiscais")
 
 ' invoca url de listagem das notas fiscais com os parametros indicados no arquivo INI
 statusNFE = dictonary("status_nfe")
+
 ' 65 NFCe 59 SAT 00 NFSe ou ainda -1 para vir tudo
 modeloNFE = dictonary("modelo_nfe")
+
+' data corrente
 dataCorrente = year(date) & "-" & right("00" & month(date), 2) & "-" & right("00" & day(date), 2)
 
 ' preenche com os parametros necessário para a chamada da URL
@@ -125,7 +127,7 @@ url_list_nfe = replace(url_list_nfe, "%STATUS_NFE%",   "=" & statusNFE)
 
 writeLogFile("[DEBUG] Acesso a API de notas fiscais: " & url_list_nfe)
 
-allNFEContent = getJSONUrl(dictonary("url_list_nfe"), token)
+allNFEContent = getJSONUrl(url_list_nfe, token)
 
 ' recupera todas as NFE pelo ID indicado no JSON de retorno IDNFE
 allNFEContent = getValueFromJSON(allNFEContent, "IDNFE")
@@ -142,31 +144,37 @@ for i=0 to uBound(allNFEContent)
 	
 	IDNFE = cleanString(allNFEContent(i))
 	
-	' busca o caminho onde o XML será salvo
-	destino = getDestino(IDNFE)
+	if not(IDNFE = "") and not(uCase(IDNFE) = "NULL") then
 	
-	' *** *** *** *** *** *** *** *** *** *** ***
-	dim tentativas
-	' quantidade de tentativas indicadas no arquivo INI
-	tentativas = dictonary("tentativas")
-	
-	do while (tentativas > 0)		
-		' verifica se o arquivo existe
-		if not(objFSO.fileExists(destino)) then
-			writeLogFile("")
-			writeLogFile("[DEBUG] Iniciando download da NFE: " & IDNFE)
-			
-			' salva o arquivo em disco
-			'saveFile dictonary("url_download") & "=" & IDNFE, destino, token
-			saveFile dictonary("url_download"), destino, token
-			
-			writeLogFile("[DEBUG] Arquivo " & destino & " salvo com sucesso")
-			totalNotas = totalNotas + 1
-			wscript.sleep(500)
-		end if
+		' busca o caminho onde o XML será salvo
+		destino = getDestino(IDNFE & ".xml")
 		
-		tentativas = tentativas-1		
-	loop
+		' *** *** *** *** *** *** *** *** *** *** ***
+		dim tentativas
+		' quantidade de tentativas indicadas no arquivo INI
+		tentativas = dictonary("tentativas")
+		
+		do while (tentativas > 0)		
+			' verifica se o arquivo existe
+			if not(objFSO.fileExists(destino)) then
+				writeLogFile("")
+				writeLogFile("[DEBUG] Iniciando download da NFE: " & IDNFE)
+				
+				' salva o arquivo em disco
+				saveFile dictonary("url_download") & "=" & IDNFE, destino, token
+				
+				writeLogFile("[DEBUG] Arquivo " & destino & " salvo com sucesso")
+				totalNotas = totalNotas + 1
+				wscript.sleep(500)
+			end if
+			
+			tentativas = tentativas-1		
+		loop
+		
+	' IDNFE inválido
+	else
+		writeLogFile "[ERRO] O IDNFE encontra-se inválido: " & IDNFE
+	end if
 	
 next
 
@@ -191,8 +199,13 @@ function saveFile(urlDownload, destino, token)
 	
 	' chama API de download da NFE
 	xmlDoc.open "GET", urlDownload, false
-	xmlDoc.setOption 2, SXH_SERVER_CERT_IGNORE_ALL_SERVER_ERRORS
+	'xmlDoc.setOption 2, SXH_SERVER_CERT_IGNORE_ALL_SERVER_ERRORS
 	xmlDoc.setRequestHeader "WTS-Session", token
+	xmlDoc.setRequestHeader "cache-control", "no-cache"
+	xmlDoc.setRequestHeader "accept", "application/xml"
+	
+	writeLogFile "[DEBUG] Acesso ao serviço " & urlDownload
+	
 	xmlDoc.send()
 	
 	checkProcessError("Ocorreu um erro ao realizar o download do arquivo em " & urlDownload)
@@ -227,6 +240,12 @@ function fimdoProcessamento()
 										   right("00" & hour(now()), 2) & right("00" & minute(now()), 2) & right("00" & second(now()), 2) )
 	writeLogFile("############################################################")
 	' ------------------------------------- '
+	
+	writeLogFile(" ____     ____   _       ___    ____   _  __")
+	writeLogFile("|  _ \   / ___| | |     |_ _|  / ___| | |/ /")
+	writeLogFile("| | | | | |     | |      | |  | |     | ' / ")
+	writeLogFile("| |_| | | |___  | |___   | |  | |___  | . \ ")
+	writeLogFile("|____/   \____| |_____| |___|  \____| |_|\_\")
 		
 	logFile.close()
 	set logFile = nothing
@@ -295,12 +314,15 @@ function getJSONUrl(url, token)
 
 	objHTTP.open "GET", url, false
 	
+	objHTTP.setRequestHeader "accept", "application/json"
+	objHTTP.setRequestHeader "cache-control", "no-cache"
+	
 	' recuperar o token ou acessar a lista de NFE?
 	if (trim(token) = "") then
 		objHTTP.setRequestHeader "WTS-Authorization", dictonary("wts_authorization")
-		objHTTP.setCredentials dictonary("username"), dictonary("password"), 0
+		'objHTTP.setCredentials dictonary("username"), dictonary("password"), 0
 	else
-		objHTTP.setRequestHeader "WTS-Session", token
+		objHTTP.setRequestHeader "wts-session", token
 	end if
 	
 	objHTTP.send()
