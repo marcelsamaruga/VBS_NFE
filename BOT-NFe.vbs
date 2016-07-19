@@ -3,6 +3,7 @@ set objFSO = createObject("Scripting.FileSystemObject")
 
 CONST forReading = 1
 CONST adTypeBinary = 1
+CONST adTypeText = 2
 CONST adSaveCreateOverWrite = 2
 CONST ForAppending = 8
 CONST asASCII = 0
@@ -160,8 +161,15 @@ for i=0 to uBound(allNFEContent)
 				writeLogFile("")
 				writeLogFile("[DEBUG] Iniciando download da NFE: " & IDNFE)
 				
-				' salva o arquivo em disco
-				saveFile dictonary("url_download") & "=" & IDNFE, destino, token
+				' RECUPERA XML DA API (MILLENIUM)
+				' *** *** *** *** *** *** *** *** *** *** ***
+				contentXMLFile = readXmlFile(dictonary("url_download") & "=" & IDNFE, token)
+				
+				' trata o conteúdo da API para retornar o conteúdo dentro da tag d:XMLNFE
+				contentXMLFile = getXMLNFE(contentXMLFile)
+				
+				' SALVA ARQUIVO EM DISCO
+				saveFile contentXMLFile, destino
 				
 				writeLogFile("[DEBUG] Arquivo " & destino & " salvo com sucesso")
 				totalNotas = totalNotas + 1
@@ -193,27 +201,64 @@ fimdoProcessamento()
 
 ' #################################
 ' função para salvar o arquivo em disco
-function saveFile(urlDownload, destino, token)
+function readXmlFile(urlDownload, token)
 	Dim xmlDoc:  set xmlDoc  = createobject("MSXML2.ServerXMLHTTP")
-	Dim oStream: set oStream = createobject("Adodb.Stream")
 	
 	' chama API de download da NFE
 	xmlDoc.open "GET", urlDownload, false
 	'xmlDoc.setOption 2, SXH_SERVER_CERT_IGNORE_ALL_SERVER_ERRORS
 	xmlDoc.setRequestHeader "WTS-Session", token
 	xmlDoc.setRequestHeader "cache-control", "no-cache"
-	xmlDoc.setRequestHeader "accept", "application/xml"
+	xmlDoc.setRequestHeader "accept", "text/xml"
 	
 	writeLogFile "[DEBUG] Acesso ao serviço " & urlDownload
 	
 	xmlDoc.send()
 	
-	checkProcessError("Ocorreu um erro ao realizar o download do arquivo em " & urlDownload)
+	checkProcessError("Ocorreu um erro ao invocar a API da NFE em " & urlDownload)
 
+	readXmlFile = xmlDoc.responseXml.xml
+	checkProcessError("Ocorreu um erro ao recuperar o conteúdo do arquivo XML " & destino)
+	
+	set xmlDoc  = nothing
+end function
+
+
+' funcao para transformar o texto do xml retornado da API em 
+function getXMLNFE(xmlContent)
+
+	Dim strLeft, strRight, strReturn
+
+	' recupera o conteúdo até o início do xml da NFe
+	strLeft  = left( xmlContent, (inStr(xmlContent, "<![CDATA[<?xml version=""1.0""") + len("![CDATA[") ) )	
+	
+	' recupera o conteúdo após o conteúdo de </d:XMLNFE>
+	strRight = right( xmlContent, ( len(xmlContent) - inStr(xmlContent, "]]></d:XMLNFE>") ) + 1 )
+	
+	' verifica se ocorreu algum erro
+	checkProcessError("Ocorreu um erro ao transformar o XML da API")
+	
+	' substitui o conteúdo antes de <d:XMLNFE> e após </d:XMLNFE>
+	strReturn = trim(replace( replace ( xmlContent, strLeft, ""), strRight, ""))
+	
+	' remove o enconding retornado pelo XML
+	'strReturn = replace(strReturn, "encoding=""UTF-8""", "")
+	
+	getXMLNFE = strReturn
+	
+end function
+
+
+' função para salvar o arquivo em disco
+function saveFile(content, destino)
+	Dim oStream: set oStream = createobject("Adodb.Stream")
+	
+	writeLogFile "[DEBUG] Salvando arquivo no destino " & destino
+	
 	with oStream
-		.type = 1 '//binário
+		.type = 2 '//binário
 		.open()
-		.write xmlDoc.responseBody
+		.writeText content
 		.saveToFile destino, 1
 	end with
 	
@@ -221,7 +266,6 @@ function saveFile(urlDownload, destino, token)
 	
 	oStream.close()
 	set oStream = nothing
-	set xmlDoc  = nothing
 end function
 
 
@@ -431,4 +475,16 @@ function cleanString(str)
     loop
 
     cleanString = trim(str)
+end function
+
+
+' transforma string em byte array
+function stringToByteArray(str)
+  Dim i, byteArray
+  
+  for i=1 To Len(str)
+    byteArray = byteArray & ChrB(Asc(Mid(str,i,1)))
+  next
+  
+  stringToByteArray = byteArray
 end function
