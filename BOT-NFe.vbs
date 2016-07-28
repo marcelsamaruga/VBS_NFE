@@ -108,7 +108,7 @@ writeLogFile("")
 ' *** *** *** *** *** *** *** *** *** *** ***
 
 ' RECUPERAR LISTAGEM DAS NFE's
-Dim allNFEContent, IDNFE
+Dim allNFEContent, IDNFE, docXMLAPI, xmlNFEContent
 writeLogFile("[DEBUG] Acessando API para recuperação da lista de notas fiscais")
 
 ' invoca url de listagem das notas fiscais com os parametros indicados no arquivo INI
@@ -155,29 +155,77 @@ for i=0 to uBound(allNFEContent)
 		' quantidade de tentativas indicadas no arquivo INI
 		tentativas = dictonary("tentativas")
 		
-		do while (tentativas > 0)		
-			' verifica se o arquivo existe
-			if not(objFSO.fileExists(destino)) then
+		' verifica se o arquivo existe
+		if not(objFSO.fileExists(destino)) then
+			do while (tentativas > 0)
+			
 				writeLogFile("")
 				writeLogFile("[DEBUG] Iniciando download da NFE: " & IDNFE)
 				
 				' RECUPERA XML DA API (MILLENIUM)
 				' *** *** *** *** *** *** *** *** *** *** ***
 				contentXMLFile = readXmlFile(dictonary("url_download") & "=" & IDNFE, token)
+				'contentXMLFile = getXMLNFE(contentXMLFile)
+								
+				' trata o conteúdo da API para retornar o conteúdo dentro da tag d:XMLNFE				
+				set docXMLAPI = createObject( "Msxml2.DOMDocument.6.0" )
 				
-				' trata o conteúdo da API para retornar o conteúdo dentro da tag d:XMLNFE
-				contentXMLFile = getXMLNFE(contentXMLFile)
+				docXMLAPI.setProperty "SelectionLanguage", "XPath"
+				docXMLAPI.async = false
+				docXMLAPI.load(contentXMLFile)
 				
-				' SALVA ARQUIVO EM DISCO
-				saveFile contentXMLFile, destino
+				checkProcessError("Ocorreu um erro ao carregar o arquivo XML de conteúdo da API")
 				
-				writeLogFile("[DEBUG] Arquivo " & destino & " salvo com sucesso")
-				totalNotas = totalNotas + 1
-				wscript.sleep(500)
-			end if
+				set root = docXMLAPI.documentElement
+
+				' recupera os nós do XML com conteúdo "d:XMLNFE"
+				set objNodeList = root.getElementsByTagName("d:XMLNFE")
+				checkProcessError("Ocorreu um erro ao carregar os nós <d:XMLNFE> do arquivo XML")
+				
+				for each xmlNFENode in objNodeList
+					
+					' remove o conteúdo CDATA
+					xmlNFEContent = replace(xmlNFENode.text, "<![CDATA[", "")
+					xmlNFEContent = left( xmlNFEContent, len(xmlNFEContent) - 1 )
+					
+					' verifica se o xml pertence a um evento
+					if ( inStr(xmlNFEContent, "<tpEvento>") > 0 ) then						
+						codEvento = mid( xmlNFEContent, inStr(xmlNFEContent, "<tpEvento>") + len("<tpEvento>"), 6 )
+						
+						writeLogFile "Recuperando arquivo XML do evento " & codEvento
+						
+						'select case codEvento
+						'	case "110111"
+						'		destino = getDestino(IDNFE & "-CANCEVE" & ".xml")
+						'end select
+						
+						destino = getDestino(IDNFE & "-" & codEvento & ".xml")
+						
+						checkProcessError("Ocorreu um erro ao recuperar o nome do evento")						
+					end if
+					
+					
+					' SALVA ARQUIVO EM DISCO
+					saveFile xmlNFEContent, destino
+					
+					writeLogFile("[DEBUG] Arquivo " & destino & " salvo com sucesso")
+					totalNotas = totalNotas + 1
+					wscript.sleep(500)
+					
+					' marca as tentativas como sucesso
+					if (err = 0) then 
+						tentativas = 0
+					end if					
+					
+				next
+				
+				set root 		= nothing
+				set docXMLAPI   = nothing
+				set objNodeList = nothing
 			
-			tentativas = tentativas-1		
-		loop
+				tentativas = tentativas-1		
+			loop
+		end if
 		
 	' IDNFE inválido
 	else
@@ -217,7 +265,8 @@ function readXmlFile(urlDownload, token)
 	
 	checkProcessError("Ocorreu um erro ao invocar a API da NFE em " & urlDownload)
 
-	readXmlFile = xmlDoc.responseXml.xml
+	'readXmlFile = xmlDoc.responseXml.xml
+	readXmlFile = xmlDoc.responseBody
 	checkProcessError("Ocorreu um erro ao recuperar o conteúdo do arquivo XML " & destino)
 	
 	set xmlDoc  = nothing
@@ -251,7 +300,7 @@ end function
 
 ' função para salvar o arquivo em disco
 function saveFile(content, destino)
-	Dim oStream: set oStream = createobject("Adodb.Stream")
+	Dim oStream: set oStream = createObject("Adodb.Stream")
 	
 	writeLogFile "[DEBUG] Salvando arquivo no destino " & destino
 	
