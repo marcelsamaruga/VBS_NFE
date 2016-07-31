@@ -2,10 +2,11 @@
 set objFSO = createObject("Scripting.FileSystemObject")
 
 CONST forReading = 1
+CONST forWriting = 2
+CONST forAppending = 8
 CONST adTypeBinary = 1
 CONST adTypeText = 2
 CONST adSaveCreateOverWrite = 2
-CONST ForAppending = 8
 CONST asASCII = 0
 CONST SXH_SERVER_CERT_IGNORE_ALL_SERVER_ERRORS = 13056
 
@@ -52,6 +53,13 @@ if ( not( objFSO.folderExists(dictonary("path_destino")) ) ) then
 	checkProcessError("Ocorreu um erro ao criar a pasta de destino: " & dictonary("path_log"))
 end if
 
+' -- verifica se a pasta de log dos downloads está criada -- '
+if ( not( objFSO.folderExists(dictonary("path_log_download")) ) ) then
+	objFSO.createFolder dictonary("path_log_download")
+	'
+	checkProcessError("Ocorreu um erro ao criar a pasta de log dos downloads : " & dictonary("path_log_download"))
+end if
+
 
 ' *** *** *** *** *** *** *** 
 ' -- cria arquivo de log AAAAMMDDHHMMSS.log -- '
@@ -80,6 +88,32 @@ next
 if ( cInt(dictonary("tentativas")) < 0 ) then
 	writeLogFile("[ERRO] A quantidade de tentativas indicadas no arquivo INI não é válida")
 	fimdoProcessamento()
+end if
+
+
+' -- cria arquivo de log dos downloads AAAAMMDD.ctr -- '
+Dim nomeDownloadLog, dictonaryDownloads
+set dictonaryDownloads = createObject("Scripting.Dictionary")
+'
+nomeDownloadLog = year(Date) & right("00" & month(Date), 2)	& right("00" & day(Date), 2) & ".ctr"
+nomeDownloadLog = dictonary("path_log_download") & "\" & nomeDownloadLog
+
+' verifica se o arquivo foi criado
+if (not( objFSO.fileExists(nomeDownloadLog) )) then
+	set logDownloadFile = objFSO.createTextFile( nomeDownloadLog , true, true )
+	'
+	checkProcessError("Ocorreu um erro ao criar o arquivo de LOG do histórico de downloads: " & nomeDownloadLog)
+else
+	' arquivo existente. Abre o arquivo para leitura
+	set logDownloadFile = objFSO.openTextFile(nomeDownloadLog, forReading, false, -2)
+	'
+	checkProcessError("Ocorreu um erro ao ler o arquivo de LOG do histórico de downloads: " & nomeDownloadLog)
+	getAllDownloadedFiles()
+	
+	' reabre o arquivo para append (escrita no final)
+	set logDownloadFile = nothing
+	set logDownloadFile = objFSO.openTextFile(nomeDownloadLog, forAppending, false, -2)
+	
 end if
 
 ' *** *** *** *** *** *** *** 
@@ -156,7 +190,8 @@ for i=0 to uBound(allNFEContent)
 		tentativas = dictonary("tentativas")
 		
 		' verifica se o arquivo existe
-		if not(objFSO.fileExists(destino)) then
+		
+		if not( dictonaryDownloads.exists(trim(destino)) ) then
 			do while (tentativas > 0)
 			
 				writeLogFile("")
@@ -165,7 +200,6 @@ for i=0 to uBound(allNFEContent)
 				' RECUPERA XML DA API (MILLENIUM)
 				' *** *** *** *** *** *** *** *** *** *** ***
 				contentXMLFile = readXmlFile(dictonary("url_download") & "=" & IDNFE, token)
-				'contentXMLFile = getXMLNFE(contentXMLFile)
 								
 				' trata o conteúdo da API para retornar o conteúdo dentro da tag d:XMLNFE				
 				set docXMLAPI = createObject( "Msxml2.DOMDocument.6.0" )
@@ -204,9 +238,13 @@ for i=0 to uBound(allNFEContent)
 						checkProcessError("Ocorreu um erro ao recuperar o nome do evento")						
 					end if
 					
-					
+
 					' SALVA ARQUIVO EM DISCO
 					saveFile xmlNFEContent, destino
+					
+					' salva no arquivo de log dos downlods 
+					logDownloadFile.writeLine destino
+					dictonaryDownloads.add destino, destino
 					
 					writeLogFile("[DEBUG] Arquivo " & destino & " salvo com sucesso")
 					totalNotas = totalNotas + 1
@@ -237,7 +275,7 @@ next
 writeLogFile("")
 
 if (totalNotas > 0) then
-	writeLogFile("[DEBUG] Total de notas recuperadas com sucesso: " & i)
+	writeLogFile("[DEBUG] Total de notas recuperadas com sucesso: " & totalNotas)
 else
 	writeLogFile("[DEBUG] Nenhuma nota fiscal encontrada")	
 end if
@@ -254,7 +292,6 @@ function readXmlFile(urlDownload, token)
 	
 	' chama API de download da NFE
 	xmlDoc.open "GET", urlDownload, false
-	'xmlDoc.setOption 2, SXH_SERVER_CERT_IGNORE_ALL_SERVER_ERRORS
 	xmlDoc.setRequestHeader "WTS-Session", token
 	xmlDoc.setRequestHeader "cache-control", "no-cache"
 	xmlDoc.setRequestHeader "accept", "text/xml"
@@ -308,7 +345,7 @@ function saveFile(content, destino)
 		.type = 2 '//binário
 		.open()
 		.writeText content
-		.saveToFile destino, 1
+		.saveToFile destino, 2
 	end with
 	
 	checkProcessError("Ocorreu um erro ao salvar o arquivo " & destino)
@@ -322,7 +359,6 @@ end function
 function writeLogFile(byVal logText)
 	logFile.writeLine Hour(Now) & ":" & Right("00" & Minute(Now), 2) & ":" & Right("00" & Second(Now), 2) & " -> " & logText
 end function
-
 
 ' -- funçao para escrever no arquivo de log e finalizar o processamento -- '
 function fimdoProcessamento()
@@ -341,7 +377,9 @@ function fimdoProcessamento()
 	writeLogFile("|____/   \____| |_____| |___|  \____| |_|\_\")
 		
 	logFile.close()
+	logDownloadFile.close()
 	set logFile = nothing
+	set logDownloadFile = nothing
 	set objFSO = nothing
 
 	wscript.quit()
@@ -388,6 +426,16 @@ function readIniFile(nomeArquivo)
   
 	set readIniFile = dictonary
 end function
+
+
+' -- função para ler o arquivo ctr contendo o histórico de downloads do dia -- '
+function getAllDownloadedFiles()
+	do until (logDownloadFile.atEndOfStream)
+		linha = trim( logDownloadFile.readLine() )
+		dictonaryDownloads.add trim(linha), trim(linha)
+	loop
+end function
+
 
 
 ' -- função para verificar se ocorreu algum erro no processamento e, caso positivo, exibir no log da aplicação -- '
